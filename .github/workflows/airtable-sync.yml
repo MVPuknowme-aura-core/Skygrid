@@ -1,0 +1,53 @@
+name: SkyGrid Airtable + AWS Deploy
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  sync-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Airtable Sync
+        env:
+          AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+          AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
+          AIRTABLE_TABLE: "Table 1"
+        run: |
+          python3 <<'PY'
+          import json, os, urllib.parse, urllib.request
+
+          api_key = os.environ["AIRTABLE_API_KEY"]
+          base_id = os.environ["AIRTABLE_BASE_ID"]
+          table = urllib.parse.quote(os.environ["AIRTABLE_TABLE"], safe="")
+
+          url = f"https://api.airtable.com/v0/{base_id}/{table}"
+
+          req = urllib.request.Request(url)
+          req.add_header("Authorization", f"Bearer {api_key}")
+
+          with urllib.request.urlopen(req) as resp:
+              data = json.load(resp)
+
+          with open('airtable.json', 'w') as f:
+              json.dump(data, f)
+
+          print(len(data.get("records", [])))
+          PY
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          aws-region: us-east-1
+
+      - name: Deploy to AWS Elastic Beanstalk
+        uses: aws-actions/aws-elasticbeanstalk-deploy@v1
+        with:
+          application-name: skygrid
+          environment-name: skygrid-env
+          aws-region: us-east-1
