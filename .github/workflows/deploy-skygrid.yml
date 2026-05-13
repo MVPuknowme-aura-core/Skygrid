@@ -2,6 +2,15 @@ name: Deploy SkyGrid
 
 on:
   workflow_dispatch:
+    inputs:
+      deploy_to_ecs:
+        description: Deploy to ECS after build and resource checks pass
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
   push:
     branches:
       - main
@@ -27,7 +36,7 @@ env:
 
 jobs:
   deploy-preflight:
-    name: SkyGrid deployment preflight
+    name: SkyGrid build and deployment preflight
     runs-on: ubuntu-latest
     environment: production
 
@@ -95,9 +104,110 @@ jobs:
           set -euo pipefail
           aws sts get-caller-identity
 
+      - name: Confirm or create ECR repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          if aws ecr describe-repositories --repository-names "${ECR_REPOSITORY}" >/dev/null 2>&1; then
+            echo "ECR repository exists: ${ECR_REPOSITORY}"
+          else
+            echo "ECR repository missing; creating: ${ECR_REPOSITORY}"
+            aws ecr create-repository \
+              --repository-name "${ECR_REPOSITORY}" \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256 >/dev/null
+          fi
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image to ECR
+        id: build-image
+        shell: bash
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          LATEST_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+
+          echo "Building SkyGrid image: ${IMAGE_URI}"
+          docker build -t "${IMAGE_URI}" -t "${LATEST_URI}" .
+
+          echo "Pushing SkyGrid image to ECR"
+          docker push "${IMAGE_URI}"
+          docker push "${LATEST_URI}"
+
+          echo "image=${IMAGE_URI}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check ECS cluster and service
+        id: ecs-check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cluster_status="missing"
+          service_status="missing"
+
+          if aws ecs describe-clusters --clusters "${ECS_CLUSTER}" --query 'clusters[0].status' --output text 2>/dev/null | grep -q ACTIVE; then
+            cluster_status="active"
+          fi
+
+          if [ "${cluster_status}" = "active" ]; then
+            service_state=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" --query 'services[0].status' --output text 2>/dev/null || true)
+            if [ "${service_state}" = "ACTIVE" ]; then
+              service_status="active"
+            fi
+          fi
+
+          echo "ECS cluster status: ${cluster_status}"
+          echo "ECS service status: ${service_status}"
+          echo "cluster_status=${cluster_status}" >> "${GITHUB_OUTPUT}"
+          echo "service_status=${service_status}" >> "${GITHUB_OUTPUT}"
+
+      - name: Confirm task definition file
+        id: taskdef-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "${ECS_TASK_DEFINITION}" ]; then
+            echo "Task definition file found: ${ECS_TASK_DEFINITION}"
+            echo "taskdef_file=present" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Task definition file missing: ${ECS_TASK_DEFINITION}"
+            echo "taskdef_file=missing" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Render Amazon ECS task definition
+        if: ${{ github.event.inputs.deploy_to_ecs == 'true' && steps.ecs-check.outputs.cluster_status == 'active' && steps.ecs-check.outputs.service_status == 'active' && steps.taskdef-check.outputs.taskdef_file == 'present' }}
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy to Amazon ECS
+        if: ${{ github.event.inputs.deploy_to_ecs == 'true' && steps.ecs-check.outputs.cluster_status == 'active' && steps.ecs-check.outputs.service_status == 'active' && steps.taskdef-check.outputs.taskdef_file == 'present' }}
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
       - name: Deployment boundary summary
         shell: bash
         run: |
           set -euo pipefail
-          echo "SkyGrid deployment preflight passed."
-          echo "Next stage can add ECR build and ECS service deployment once AWS resources are confirmed."
+          echo "SkyGrid ECR build stage completed."
+          echo "Image pushed: ${{ steps.build-image.outputs.image }}"
+          echo "ECS cluster status: ${{ steps.ecs-check.outputs.cluster_status }}"
+          echo "ECS service status: ${{ steps.ecs-check.outputs.service_status }}"
+          echo "Task definition file: ${{ steps.taskdef-check.outputs.taskdef_file }}"
+          echo "Deploy requested: ${{ github.event.inputs.deploy_to_ecs || 'false' }}"
+          if [ "${{ github.event.inputs.deploy_to_ecs || 'false' }}" != "true" ]; then
+            echo "ECS deploy intentionally skipped. Re-run manually with deploy_to_ecs=true after ECS resources and task definition are ready."
+          fi
