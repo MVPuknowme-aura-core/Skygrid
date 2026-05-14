@@ -95,15 +95,27 @@ jobs:
           if-no-files-found: warn
 
       - name: Configure GitHub Pages
+        id: configure-pages
         uses: actions/configure-pages@v5
+        continue-on-error: true
         with:
-          enablement: true
+          enablement: false
 
       - name: Upload Pages artifact
+        if: ${{ steps.configure-pages.outcome == 'success' }}
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
 
       - name: Deploy to GitHub Pages
+        if: ${{ steps.configure-pages.outcome == 'success' }}
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Pages setup notice
+        if: ${{ steps.configure-pages.outcome != 'success' }}
+        run: |
+          echo "Auto Drill completed and artifacts were uploaded."
+          echo "GitHub Pages is not enabled for this repo yet, so public dashboard publish was skipped."
+          echo "Enable Pages manually: Settings -> Pages -> Source: GitHub Actions."
+          echo "Then rerun SkyGrid Auto Drill."
