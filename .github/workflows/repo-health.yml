@@ -1,0 +1,119 @@
+name: SkyGrid Repo Health
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - Dockerfile
+      - public/**
+      - scripts/**
+      - .github/workflows/repo-health.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - public/**
+      - scripts/**
+      - .github/workflows/repo-health.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skygrid-repo-health
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  health:
+    name: Validate SkyGrid scaffold
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate repository boundary
+        run: |
+          set -euo pipefail
+          echo "Canonical SkyGrid repo: MVPuknowme-aura-core/Skygrid"
+          echo "Repository from GitHub context: ${GITHUB_REPOSITORY}"
+          if [ "${GITHUB_REPOSITORY}" != "MVPuknowme-aura-core/Skygrid" ]; then
+            echo "::error title=Wrong repository::SkyGrid health tests must run from MVPuknowme-aura-core/Skygrid."
+            exit 1
+          fi
+
+      - name: Validate required files
+        run: |
+          set -euo pipefail
+          test -f Dockerfile
+          test -f public/index.html
+          test -f scripts/auto-drill.sh
+          test -f scripts/build-drill-dashboard.py
+          grep -q "SkyGrid" public/index.html
+          grep -q "Aura-Core" public/index.html
+          grep -q "HEALTHCHECK" Dockerfile
+          grep -q "COPY public/" Dockerfile
+
+      - name: Check script syntax
+        run: |
+          set -euo pipefail
+          bash -n scripts/auto-drill.sh
+          python3 -m py_compile scripts/build-drill-dashboard.py
+
+      - name: Run one-sample Auto Drill
+        env:
+          PRIMARY_URL: https://skygrid-gs3e.b12sites.com/
+          FALLBACK_URL: https://github.com/MVPuknowme-aura-core/Skygrid
+          SIMULATE_FAILURE: "true"
+          SAMPLES: "1"
+          TIMEOUT_SECONDS: "10"
+        run: |
+          set -euo pipefail
+          chmod +x scripts/auto-drill.sh
+          ./scripts/auto-drill.sh
+
+      - name: Build dashboard from drill report
+        run: |
+          set -euo pipefail
+          python3 scripts/build-drill-dashboard.py
+          test -f public/auto-drill.html
+          test -f public/latest-auto-drill.json
+          grep -q "Auto Drill Dashboard" public/auto-drill.html
+          grep -q "telemetry_only" public/latest-auto-drill.json
+
+      - name: Build Docker image
+        run: |
+          set -euo pipefail
+          docker build -t skygrid-health:${GITHUB_SHA} .
+
+      - name: Smoke test Docker container
+        run: |
+          set -euo pipefail
+          docker run -d --name skygrid-health -p 8080:80 skygrid-health:${GITHUB_SHA}
+          trap 'docker logs skygrid-health || true; docker rm -f skygrid-health || true' EXIT
+          for attempt in $(seq 1 10); do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/ | grep -q "Reliability Node Online"; then
+              echo "SkyGrid container smoke test passed."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error title=Container smoke test failed::SkyGrid container did not return expected page."
+          exit 1
+
+      - name: Upload health artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: skygrid-repo-health-artifacts
+          path: |
+            drill-reports/
+            public/auto-drill.html
+            public/latest-auto-drill.json
+          if-no-files-found: warn
