@@ -1,5 +1,6 @@
 name: SkyGrid Auto Drill
 
+# Trigger note: safe Auto Drill-only run. AWS deploy workflow is path-restricted separately.
 on:
   workflow_dispatch:
     inputs:
