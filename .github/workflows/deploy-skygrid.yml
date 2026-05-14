@@ -14,6 +14,11 @@ on:
   push:
     branches:
       - main
+    paths:
+      - Dockerfile
+      - public/**
+      - .aws/**
+      - .github/workflows/deploy-skygrid.yml
 
 permissions:
   contents: read
@@ -76,6 +81,7 @@ jobs:
           echo "- AWS_ROLE_ARN configured: ${has_role}"
           echo "- Static AWS key pair configured: ${has_static_keys}"
           echo "- Canonical deploy repo: MVPuknowme-aura-core/Skygrid"
+          echo "- Push trigger is restricted to Dockerfile, public/**, .aws/**, and this deploy workflow."
 
           if [ "${has_role}" != "yes" ] && [ "${has_static_keys}" != "yes" ]; then
             echo "::error title=Missing AWS credential provider::Configure AWS_ROLE_ARN for OIDC, or configure both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in MVPuknowme-aura-core/Skygrid."
