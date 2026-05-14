@@ -1,5 +1,6 @@
 name: Deploy SkyGrid
 
+# Phase 2 trigger: AWS credential + ECR-only preflight. ECS deploy remains gated by deploy_to_ecs=true.
 on:
   workflow_dispatch:
     inputs:
