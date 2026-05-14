@@ -24,7 +24,8 @@ on:
       - scripts/build-drill-dashboard.py
       - .github/workflows/auto-drill.yml
   schedule:
-    - cron: "17 */6 * * *"
+    # Overnight drill cadence: hourly safe advisory probes.
+    - cron: "17 * * * *"
   pull_request:
     paths:
       - scripts/auto-drill.sh
