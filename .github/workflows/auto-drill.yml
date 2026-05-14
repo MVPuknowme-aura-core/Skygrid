@@ -15,6 +15,13 @@ on:
         description: Force simulated fallback recommendation
         required: false
         default: "true"
+  push:
+    branches:
+      - main
+    paths:
+      - scripts/auto-drill.sh
+      - scripts/build-drill-dashboard.py
+      - .github/workflows/auto-drill.yml
   schedule:
     - cron: "17 */6 * * *"
   pull_request:
