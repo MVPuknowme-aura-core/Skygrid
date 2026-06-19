@@ -46,7 +46,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Deploy to AWS Elastic Beanstalk
-        uses: aws-actions/aws-elasticbeanstalk-deploy@v2
+        uses: aws-actions/aws-elasticbeanstalk-deploy@v1
         with:
           application-name: skygrid
           environment-name: skygrid-env
