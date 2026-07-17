@@ -2,3 +2,5 @@ termius-bridge-credentials.json
 APPLog_*.log
 AuraCore_RnD_Credit_Claim_*.pdf
 files.zip
+
+.wrangler/
