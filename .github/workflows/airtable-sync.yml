@@ -1,8 +1,13 @@
 name: SkyGrid Airtable + AWS Deploy
 
 on:
+  workflow_dispatch:
   push:
     branches: ["main"]
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   sync-and-deploy:
@@ -51,3 +56,6 @@ jobs:
           application-name: skygrid
           environment-name: skygrid-env
           aws-region: us-east-1
+          version-label: ${{ github.sha }}
+          wait-for-deployment: "true"
+          wait-for-environment-recovery: "true"

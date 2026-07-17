@@ -1,0 +1,122 @@
+name: SkyGrid Auto Drill
+
+# Trigger note: Node24 proof run. AWS deploy workflow is path-restricted separately.
+on:
+  workflow_dispatch:
+    inputs:
+      primary_url:
+        description: Primary URL to probe
+        required: false
+        default: https://skygrid-gs3e.b12sites.com/
+      fallback_url:
+        description: Fallback URL to probe
+        required: false
+        default: https://github.com/MVPuknowme-aura-core/Skygrid
+      simulate_failure:
+        description: Force simulated fallback recommendation
+        required: false
+        default: "true"
+  push:
+    branches:
+      - main
+    paths:
+      - scripts/auto-drill.sh
+      - scripts/build-drill-dashboard.py
+      - .github/workflows/auto-drill.yml
+  schedule:
+    # Overnight drill cadence: hourly safe advisory probes.
+    - cron: "17 * * * *"
+  pull_request:
+    paths:
+      - scripts/auto-drill.sh
+      - scripts/build-drill-dashboard.py
+      - .github/workflows/auto-drill.yml
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: skygrid-auto-drill-pages
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  auto-drill:
+    name: Run safe failover auto drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate repository boundary
+        run: |
+          set -euo pipefail
+          echo "Canonical Auto Drill repo: MVPuknowme-aura-core/Skygrid"
+          echo "Repository from GitHub context: ${GITHUB_REPOSITORY}"
+          if [ "${GITHUB_REPOSITORY}" != "MVPuknowme-aura-core/Skygrid" ]; then
+            echo "::error title=Wrong auto drill repository::SkyGrid Auto Drill must run from MVPuknowme-aura-core/Skygrid."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Prepare drill script
+        run: chmod +x scripts/auto-drill.sh
+
+      - name: Run auto drill
+        env:
+          PRIMARY_URL: ${{ github.event.inputs.primary_url || 'https://skygrid-gs3e.b12sites.com/' }}
+          FALLBACK_URL: ${{ github.event.inputs.fallback_url || 'https://github.com/MVPuknowme-aura-core/Skygrid' }}
+          SIMULATE_FAILURE: ${{ github.event.inputs.simulate_failure || 'true' }}
+          SAMPLES: '3'
+          TIMEOUT_SECONDS: '10'
+        run: ./scripts/auto-drill.sh
+
+      - name: Build dashboard HTML
+        run: python3 scripts/build-drill-dashboard.py
+
+      - name: Upload telemetry artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: skygrid-auto-drill-reports
+          path: |
+            drill-reports/
+            public/
+          if-no-files-found: warn
+
+      - name: Configure GitHub Pages
+        id: configure-pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+        with:
+          enablement: false
+
+      - name: Upload Pages artifact
+        if: ${{ steps.configure-pages.outcome == 'success' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        if: ${{ steps.configure-pages.outcome == 'success' }}
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Pages setup notice
+        if: ${{ steps.configure-pages.outcome != 'success' }}
+        run: |
+          echo "Auto Drill completed and artifacts were uploaded."
+          echo "GitHub Pages is not enabled for this repo yet, so public dashboard publish was skipped."
+          echo "Enable Pages manually: Settings -> Pages -> Source: GitHub Actions."
+          echo "Then rerun SkyGrid Auto Drill."
