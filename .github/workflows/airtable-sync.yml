@@ -1,8 +1,13 @@
 name: SkyGrid Airtable + AWS Deploy
 
 on:
+  workflow_dispatch:
   push:
     branches: ["main"]
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   sync-and-deploy:
